@@ -348,6 +348,17 @@ bool OpenVPNManager::deleteService(const std::string &name)
   return success;
 }
 
+static std::string extractIfconfigPushIp(const std::string &line)
+{
+  std::istringstream iss(line);
+  std::string keyword, ip;
+  if (!(iss >> keyword) || keyword != "ifconfig-push")
+    return std::string();
+  if (!(iss >> ip))
+    return std::string();
+  return ip;
+}
+
 bool OpenVPNManager::createClient(const std::string &name, const std::string &serviceName, const std::string &wanip, const std::string &client_ip)
 {
   if (name.empty() || serviceName.empty() || wanip.empty())
@@ -391,13 +402,16 @@ bool OpenVPNManager::createClient(const std::string &name, const std::string &se
     for (const auto &entry : fs::directory_iterator(ccdDir))
     {
       if (!entry.is_regular_file()) continue;
+      if (entry.path().filename().string() == name) continue;
       std::ifstream f(entry.path());
+      if (!f.is_open()) continue;
       std::string line;
       while (std::getline(f, line))
       {
-        if (line.find("ifconfig-push") != std::string::npos && line.find(client_ip) != std::string::npos)
+        if (extractIfconfigPushIp(line) == client_ip)
         {
-          std::cerr << "IP conflict: " << client_ip << " is already assigned to another client" << std::endl;
+          std::cerr << "IP conflict: " << client_ip << " is already assigned to client '"
+                    << entry.path().filename().string() << "'" << std::endl;
           return false;
         }
       }
@@ -686,20 +700,10 @@ std::vector<VPNClient> OpenVPNManager::getTotalClients(const std::string &servic
               std::string line;
               while (std::getline(f, line))
               {
-                  if (line.find("ifconfig-push") != std::string::npos)
+                  const std::string pushedIp = extractIfconfigPushIp(line);
+                  if (!pushedIp.empty())
                   {
-                      std::istringstream iss(line);
-                      std::string token;
-                      int field = 0;
-                      while (iss >> token)
-                      {
-                          if (field == 1)
-                          {
-                              client.vpnIp = token;
-                              break;
-                          }
-                          field++;
-                      }
+                      client.vpnIp = pushedIp;
                       break;
                   }
               }
